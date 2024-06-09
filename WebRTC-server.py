@@ -1,24 +1,21 @@
-import aiohttp
+import asyncio
 from aiohttp import web
-import json
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
-
-from integrated_hand_movement_detection import MediaPipeVideoStream
+from aiortc import RTCPeerConnection, RTCSessionDescription
+from integrated_hand_movement_detection import HandTrackingStream
 
 pcs = set()
 
-class VideoStream(VideoStreamTrack):
-    def __init__(self, source):
-        super().__init__()
-        self.source = source  # This is your video source integrated with MediaPipe
-
-    async def recv(self):
-        frame = await self.source.get_frame()
-        return frame
 
 async def index(request):
     with open('index.html', 'r') as f:
         return web.Response(content_type='text/html', text=f.read())
+
+
+async def save_hand_data_periodically(hand_tracking_stream):
+    while True:
+        await asyncio.sleep(10)  # Save data every 10 seconds
+        hand_tracking_stream.save_hand_data()
+
 
 async def offer(request):
     params = await request.json()
@@ -34,9 +31,9 @@ async def offer(request):
             await pc.close()
             pcs.discard(pc)
 
-
-    local_video = MediaPipeVideoStream()
+    local_video = HandTrackingStream()
     pc.addTrack(local_video)
+    asyncio.ensure_future(save_hand_data_periodically(local_video))  # Start periodic saving
 
     await pc.setRemoteDescription(offer)
     answer = await pc.createAnswer()
@@ -46,6 +43,7 @@ async def offer(request):
         "sdp": pc.localDescription.sdp,
         "type": pc.localDescription.type
     })
+
 
 app = web.Application()
 app.router.add_get('/', index)
