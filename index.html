@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Video Conference</title>
+    <style>
+        video {
+            width: 640px;
+            height: 480px;
+        }
+    </style>
+</head>
+<body>
+<h1>Video Conference</h1>
+<video id="localVideo" autoplay muted></video>
+<video id="remoteVideo" autoplay></video>
+
+<script>
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    let localStream;
+
+    // Function to start the video stream
+    async function startVideo() {
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localVideo.srcObject = localStream;
+        } catch (error) {
+            console.error('Error accessing media devices:', error);
+        }
+    }
+
+    // Function to establish WebRTC connection
+    async function establishConnection() {
+        const pc = new RTCPeerConnection();
+
+        // Add local stream to the peer connection
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+        // Create offer and set local description
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        // Send offer to the server
+        const response = await fetch('/offer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(offer)
+        });
+
+        // Get answer from the server and set remote description
+        const answer = await response.json();
+        await pc.setRemoteDescription(answer);
+
+        // Handle incoming tracks
+        pc.ontrack = event => {
+            remoteVideo.srcObject = event.streams[0];
+        };
+    }
+
+    // Start the video stream and establish WebRTC connection
+    startVideo().then(() => {
+        establishConnection();
+    });
+</script>
+</body>
+</html>
