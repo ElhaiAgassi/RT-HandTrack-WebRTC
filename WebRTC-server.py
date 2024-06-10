@@ -1,52 +1,43 @@
-import asyncio
-from aiohttp import web
-from aiortc import RTCPeerConnection, RTCSessionDescription
-from integrated_hand_movement_detection import HandTrackingStream
+from flask import Flask, Response
+import cv2
+import mediapipe as mp
 
-pcs = set()
+app = Flask(__name__)
+mp_hands = mp.solutions.hands.Hands(
+    static_image_mode=False,
+    max_num_hands=2,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5)
 
-
-async def index(request):
-    with open('index.html', 'r') as f:
-        return web.Response(content_type='text/html', text=f.read())
-
-
-async def save_hand_data_periodically(hand_tracking_stream):
+def gen_frames():  # generate frame by frame from camera
+    cap = cv2.VideoCapture(0)
     while True:
-        await asyncio.sleep(10)  # Save data every 10 seconds
-        hand_tracking_stream.save_hand_data()
+        success, frame = cap.read()
+        if not success:
+            break
+        else:
+            # Convert the BGR image to RGB, flip the image around y-axis for correct handedness output
+            frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
+            results = mp_hands.process(frame)
+            # Draw hand landmarks
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    mp.solutions.drawing_utils.draw_landmarks(
+                        frame, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
+            frame = cv2.imencode('.jpg', frame)[1].tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')  # concat frame one by one and show result
 
+@app.route('/video_feed')
+def video_feed():
+    # Video streaming route. Put this in the src attribute of an img tag
+    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-async def offer(request):
-    params = await request.json()
-    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+@app.route('/')
+def index():
+    # Video streaming home page.
+    return Response('<html><body><img src="/video_feed" width="640" height="480"/></body></html>')
 
-    pc = RTCPeerConnection()
-    pc_id = "PeerConnection(%s)" % id(pc)
-    pcs.add(pc)
-
-    @pc.on("iceconnectionstatechange")
-    async def on_iceconnectionstatechange():
-        if pc.iceConnectionState == "failed":
-            await pc.close()
-            pcs.discard(pc)
-
-    local_video = HandTrackingStream()
-    pc.addTrack(local_video)
-    asyncio.ensure_future(save_hand_data_periodically(local_video))  # Start periodic saving
-
-    await pc.setRemoteDescription(offer)
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
-
-    return web.json_response({
-        "sdp": pc.localDescription.sdp,
-        "type": pc.localDescription.type
-    })
-
-
-app = web.Application()
-app.router.add_get('/', index)
-app.router.add_post('/offer', offer)
-
-web.run_app(app, port=8080)
+if __name__ == '__main__':
+    app.run(debug=True, threaded=True)

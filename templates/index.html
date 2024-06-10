@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Video Conference with Hand Tracking</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
+    <style>
+        canvas, video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1);
+            opacity: 0.9; /* Slightly see-through to reveal the canvas drawing */
+        }
+        button {
+            position: absolute;
+            top: 10px;
+            left: 0;
+            right: 10px;
+            opacity: 0.9;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+<video id="localVideo" autoplay muted playsinline width="640" height="480"></video>
+<canvas id="outputCanvas" width="640" height="480"></canvas>
+<button onclick="downloadCSV()">Download CSV</button>
+<script>
+    const videoElement = document.getElementById('localVideo');
+    const canvasElement = document.getElementById('outputCanvas');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    let handMovements = []; // Array to store hand movement data
+    const loggingInterval = 5000; // Time in ms between logs
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands: 4,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    hands.onResults((results) => {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        if (results.multiHandLandmarks) {
+            for (const [index, landmarks] of results.multiHandLandmarks.entries()) {
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: 'lime', lineWidth: 4});
+                drawLandmarks(canvasCtx, landmarks, {color: 'red', radius: 5});
+                handMovements.push({time: Date.now(), handIndex: index, landmarks: landmarks.map(l => ({x: l.x, y: l.y, z: l.z}))});
+            }
+        }
+        canvasCtx.restore();
+    });
+
+    setInterval(() => {
+        if (handMovements.length) {
+            console.log(handMovements); // Log the data; replace this with a server call if needed
+            handMovements = []; // Clear the array after logging
+        }
+    }, loggingInterval);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: 640,
+        height: 480
+    });
+    camera.start();
+
+    // Function to download data as CSV
+    function downloadCSV() {
+        const rows = [
+            ["time", "handIndex", "landmarkIndex", "x", "y", "z"]
+        ];
+        handMovements.forEach(move => {
+            move.landmarks.forEach((landmark, index) => {
+                rows.push([move.time, move.handIndex, index, landmark.x, landmark.y, landmark.z]);
+            });
+        });
+
+        let csvContent = "data:text/csv;charset=utf-8,";
+        rows.forEach(rowArray => {
+            let row = rowArray.join(",");
+            csvContent += row + "\r\n";
+        });
+
+        var encodedUri = encodeURI(csvContent);
+        var link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "hand_movements.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+<button onclick="downloadCSV()">Download CSV</button>
+
+</body>
+</html>
